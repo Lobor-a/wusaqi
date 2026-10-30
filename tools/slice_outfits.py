@@ -39,24 +39,40 @@ MAX_H = BASELINE      # 长耳朵 + 高帽子的套会被头宽放大到超高�
 
 
 def cutout(cell: Image.Image) -> Image.Image:
-    """去绿底，返回带 alpha 的图。"""
-    rgb = cell.convert("RGB")
-    work = rgb.copy()
-    w, h = work.size
-    seeds = [(2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3),
-             (w // 2, 2), (w // 2, h - 3), (2, h // 2), (w - 3, h // 2)]
-    for s in seeds:
-        try:
-            ImageDraw.floodfill(work, s, (255, 0, 255), thresh=70)
-        except Exception:
-            pass
+    """去绿底，返回带 alpha 的图。
 
-    bg = work.load()
+    种子点必须本身就是背景绿：曾经固定取 8 个边缘点，其中一两个落在了
+    兔子的深色描边上，结果整条描边被当成背景填掉，脸和身体轮廓全没了。
+    现在沿四边扫一圈，只有「颜色接近背景绿」的点才允许当种子。
+    """
+    rgb = cell.convert("RGB")
+    w, h = rgb.size
+    px = rgb.load()
+    corners = [px[2, 2], px[w - 3, 2], px[2, h - 3], px[w - 3, h - 3]]
+    bg = tuple(sorted(c[i] for c in corners)[len(corners) // 2] for i in range(3))
+
+    def is_bg(c) -> bool:
+        return max(abs(c[i] - bg[i]) for i in range(3)) < 55
+
+    work = rgb.copy()
+    seeds = []
+    for x in range(0, w, 6):
+        seeds += [(x, 0), (x, h - 1)]
+    for y in range(0, h, 6):
+        seeds += [(0, y), (w - 1, y)]
+    for s in seeds:
+        if is_bg(px[s[0], s[1]]):
+            try:
+                ImageDraw.floodfill(work, s, (255, 0, 255), thresh=70)
+            except Exception:
+                pass
+
+    bgp = work.load()
     mask = Image.new("L", (w, h), 255)
     mp = mask.load()
     for y in range(h):
         for x in range(w):
-            if bg[x, y] == (255, 0, 255):
+            if bgp[x, y] == (255, 0, 255):
                 mp[x, y] = 0
     mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.0))
     out = rgb.convert("RGBA")
