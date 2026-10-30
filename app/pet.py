@@ -734,6 +734,7 @@ class PetWindow(QWidget):
             self.tray.setToolTip(tip)
 
     def quit_app(self) -> None:
+        _quit_trace("菜单里的「退出」")
         self.cfg.pos = [self.x(), self.y()]
         self.cfg.last_seen = time.time()
         self.cfg.save()
@@ -829,6 +830,7 @@ class App:
         self.pet.lolping = self.lolping
         self.lolping.error.connect(self.lolping_error)
         self.qapp.aboutToQuit.connect(self.lolping.stop)
+        self.qapp.aboutToQuit.connect(lambda: _quit_trace("事件循环退出（不是菜单触发的）"))
         self.lolping.start()
 
         self.pet.tray = None
@@ -895,6 +897,18 @@ def _log_exc(exc_type, exc, tb):
         with open(theme.ERROR_LOG, "a", encoding="utf-8") as f:
             f.write("\n===== " + time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
             traceback.print_exception(exc_type, exc, tb, file=f)
+    except Exception:
+        pass
+
+
+def _quit_trace(where: str) -> None:
+    """退出时留一份调用栈，方便事后查是谁把桌宠关掉的。"""
+    try:
+        import traceback
+
+        with open(theme.QUIT_LOG, "a", encoding="utf-8") as f:
+            f.write("\n===== %s  来源：%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), where))
+            traceback.print_stack(file=f)
     except Exception:
         pass
 

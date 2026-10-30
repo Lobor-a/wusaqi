@@ -69,6 +69,7 @@ def resource(rel: str) -> str:
 CONFIG_PATH = os.path.join(app_dir(), "pet_config.json")
 REMINDER_PATH = os.path.join(app_dir(), "reminders.json")
 ERROR_LOG = os.path.join(app_dir(), "error.log")
+QUIT_LOG = os.path.join(app_dir(), "quit.log")
 
 
 def load_outfits() -> list[dict]:
