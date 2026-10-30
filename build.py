@@ -1,7 +1,7 @@
-"""打包成单文件 exe。
+"""打包成包含 lolPing 运行组件的程序目录。
 
 用法：  python build.py
-产物：  dist/兔兔桌宠_提醒版.exe
+产物：  dist/兔兔桌宠/兔兔桌宠.exe
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.join(HERE, "app")
 ICON_PNG = os.path.join(APP, "assets", "icon256.png")
 ICON_ICO = os.path.join(HERE, "build", "app.ico")
-NAME = "兔兔桌宠_提醒版"
+NAME = "兔兔桌宠"
 
 
 def make_icon() -> str:
@@ -32,20 +32,30 @@ def make_icon() -> str:
 
 def main() -> int:
     icon = make_icon()
+    electron = os.environ.get("TUTU_ELECTRON_DIR", os.path.join(os.path.expanduser("~"), ".dsh", "electron"))
+    if not os.path.isfile(os.path.join(electron, "electron.exe")):
+        print("未找到 Electron：请设置 TUTU_ELECTRON_DIR 指向 Electron 运行目录。")
+        return 1
     args = [
         sys.executable,
         "-m",
         "PyInstaller",
         "--noconfirm",
         "--clean",
-        "--onefile",
+        "--onedir",
         "--windowed",
         "--name",
         NAME,
+        "--specpath",
+        os.path.join(HERE, "build"),
         "--paths",
         APP,
         "--add-data",
         f"{os.path.join(APP, 'assets')};assets",
+        "--add-data",
+        f"{os.path.join(HERE, 'runtime', 'lolping')};runtime/lolping",
+        "--add-data",
+        f"{electron};runtime/electron",
         "--hidden-import",
         "PySide6.QtNetwork",
         "--exclude-module",
@@ -57,9 +67,16 @@ def main() -> int:
     if icon:
         args[-1:-1] = ["--icon", icon]
     print(" ".join(args))
-    r = subprocess.run(args, cwd=HERE)
+    # Poppler's ICU has incompatible exports with the Windows ICU used by Qt.
+    # Do not let PyInstaller collect it from this machine's PATH.
+    env = os.environ.copy()
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if "poppler" not in p.lower()
+    )
+    r = subprocess.run(args, cwd=HERE, env=env)
     if r.returncode == 0:
-        exe = os.path.join(HERE, "dist", NAME + ".exe")
+        exe = os.path.join(HERE, "dist", NAME, NAME + ".exe")
         print("OK ->", exe, os.path.getsize(exe) // 1024 // 1024, "MB")
     return r.returncode
 

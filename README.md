@@ -59,6 +59,12 @@ Windows 10 / 11，单文件，约 49 MB。
 
 ## 从源码运行
 
+### lolPing 信号与表情
+
+兔兔右键或托盘菜单中选择「lolPing」，可打开设置、切换信号和表情、进入联机房间或重启输入监听。新设置默认信号大小为 60，并自动加入 `PING-0GC4M-3WEW8` 房间；之后可在设置里更改。默认快捷键以设置页面为准；全屏游戏建议使用窗口化或无边框模式。退出兔兔时也会关闭 lolPing。
+
+lolPing 使用独立设置，保存在程序目录的 `data/lolping/`，不会修改其他桌宠的设置。源码运行需要 Windows Electron 43.3.0：默认读取 `%USERPROFILE%\.dsh\electron\electron.exe`，也可用 `TUTU_ELECTRON` 指定可执行文件。打包时设置 `TUTU_ELECTRON_DIR` 指向完整 Electron 目录（默认同上），运行组件将打包到 EXE 中。详见 [来源与许可证](runtime/lolping/lolping/README.md)：代码采用上游 MIT 许可证，游戏素材保留原有版权说明。
+
 需要 Python 3.10+ 和 PySide6。
 
 ```bash
@@ -70,7 +76,7 @@ python app/pet.py
 
 ```bash
 pip install pyinstaller
-python build.py          # 产物在 dist/兔兔桌宠_提醒版.exe
+python build.py          # 产物在 dist/兔兔桌宠/，请保留整个目录
 ```
 
 ## 目录结构

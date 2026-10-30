@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 import motion
 import reminders
+import lolping
 import theme
 import wardrobe
 
@@ -572,6 +573,8 @@ class PetWindow(QWidget):
         self._act(m, "🤚  摸摸头", self.pat)
         self._act(m, "🥕  喂根胡萝卜", self.feed)
 
+        self.add_lolping_menu(m)
+
         am = m.addMenu("🎬  表演动作")
         for key, label in motion.ACTION_LABELS:
             self._act(am, label, lambda k=key: self.play_action(k))
@@ -637,6 +640,16 @@ class PetWindow(QWidget):
         self.store.save()
         state = "开着" if r["enabled"] else "先关掉"
         self.say(f"「{r.get('name', '提醒')}」{state}了", 2600)
+
+    def add_lolping_menu(self, menu):
+        lp = menu.addMenu("📣  lolPing")
+        controller = self.lolping
+        self._act(lp, "设置管理…", lambda: controller.command('settings'))
+        toggle = self._act(lp, "启用信号与表情", lambda: controller.command('toggle'))
+        lp.aboutToShow.connect(lambda: toggle.setText(
+            "暂停信号与表情" if controller.status.get('enabled') else "启用信号与表情"))
+        self._act(lp, "联机房间…", lambda: controller.command('room'))
+        self._act(lp, "重启输入监听", controller.retry)
 
     def toggle_flag(self, key: str) -> None:
         setattr(self.cfg, key, not getattr(self.cfg, key))
@@ -793,6 +806,12 @@ class App:
         self.cfg = Config()
         self.pet = PetWindow(self.cfg)
 
+        self.lolping = lolping.LolPing(self.pet)
+        self.pet.lolping = self.lolping
+        self.lolping.error.connect(lambda message: QMessageBox.warning(self.pet, 'lolPing', message))
+        self.qapp.aboutToQuit.connect(self.lolping.stop)
+        self.lolping.start()
+
         self.pet.tray = None
         self.build_tray()
         self.pet.show()
@@ -814,6 +833,7 @@ class App:
         m.addAction("⏰  提醒设置…", self.pet.open_reminders)
         m.addAction("⏱  快速专注 25 分钟", lambda: self.pet.start_focus(25))
         m.addAction("🔕  静音 / 取消静音", self.pet.toggle_mute)
+        self.pet.add_lolping_menu(m)
         m.addSeparator()
         m.addAction("❌  退出", self.pet.quit_app)
         self.tray.setContextMenu(m)
