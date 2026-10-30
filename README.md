@@ -8,7 +8,7 @@
 
 ## 下载即用
 
-到 [Releases](../../releases) 或仓库里的 `dist/兔兔桌宠_提醒版.exe` 下载，双击运行，无需安装 Python。
+直接下仓库里的 `dist/兔兔桌宠_提醒版.exe`（页面上点 **Download raw file**），双击运行，无需安装 Python。
 Windows 10 / 11，单文件，约 49 MB。
 
 ## 提醒功能
