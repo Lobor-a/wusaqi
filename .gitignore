@@ -1,0 +1,22 @@
+# 打包中间产物
+build/
+*.spec.bak
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时生成的配置（每台电脑不一样，不要提交）
+dist/pet_config.json
+dist/reminders.json
+error.log
+
+# 开发期的截图 / 测试脚本
+app/_shots/
+app/_*.py
+
+# 系统文件
+Thumbs.db
+desktop.ini
+.DS_Store
