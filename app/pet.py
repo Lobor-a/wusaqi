@@ -861,7 +861,12 @@ class App:
         m.addAction("🔕  静音 / 取消静音", self.pet.toggle_mute)
         self.pet.add_lolping_menu(m)
         m.addSeparator()
-        m.addAction("❌  退出", self.pet.quit_app)
+        # 托盘菜单同样是从底部往上弹，最后一项紧挨鼠标，退出别放那儿
+        more = m.addMenu("⚙  更多")
+        more.addAction("⚡  开机自动启动", self.pet.toggle_autostart)
+        more.addSeparator()
+        more.addAction("❌  退出", self.pet.quit_app)
+        m.addAction("🪂  回到地面", self.pet.go_floor)
         self.tray.setContextMenu(m)
         self.tray.activated.connect(self.on_tray)
         self.tray.show()
