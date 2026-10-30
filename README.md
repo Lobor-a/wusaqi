@@ -65,6 +65,8 @@ Windows 10 / 11，单文件，约 49 MB。
 
 lolPing 使用独立设置，保存在程序目录的 `data/lolping/`，不会修改其他桌宠的设置。源码运行需要 Windows Electron 43.3.0：默认读取 `%USERPROFILE%\.dsh\electron\electron.exe`，也可用 `TUTU_ELECTRON` 指定可执行文件。打包时设置 `TUTU_ELECTRON_DIR` 指向完整 Electron 目录（默认同上），运行组件将打包到 EXE 中。详见 [来源与许可证](runtime/lolping/lolping/README.md)：代码采用上游 MIT 许可证，游戏素材保留原有版权说明。
 
+没装 Electron 也没关系：兔兔照常启动，lolPing 子菜单里会显示「（未安装 Electron 运行组件）」，点其它项才会在气泡里提示缺什么，不会弹窗打断你。
+
 需要 Python 3.10+ 和 PySide6。
 
 ```bash

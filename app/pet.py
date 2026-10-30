@@ -644,6 +644,10 @@ class PetWindow(QWidget):
     def add_lolping_menu(self, menu):
         lp = menu.addMenu("📣  lolPing")
         controller = self.lolping
+        if not controller.available:
+            hint = self._act(lp, "（未安装 Electron 运行组件）", lambda: None)
+            hint.setEnabled(False)
+            lp.addSeparator()
         self._act(lp, "设置管理…", lambda: controller.command('settings'))
         toggle = self._act(lp, "启用信号与表情", lambda: controller.command('toggle'))
         lp.aboutToShow.connect(lambda: toggle.setText(
@@ -808,7 +812,7 @@ class App:
 
         self.lolping = lolping.LolPing(self.pet)
         self.pet.lolping = self.lolping
-        self.lolping.error.connect(lambda message: QMessageBox.warning(self.pet, 'lolPing', message))
+        self.lolping.error.connect(self.lolping_error)
         self.qapp.aboutToQuit.connect(self.lolping.stop)
         self.lolping.start()
 
@@ -821,6 +825,13 @@ class App:
                 6000,
                 lambda: self.pet.say("右键我 →「⏰ 提醒」，就能让我准时喊你睡觉啦～", 5200),
             )
+
+    def lolping_error(self, message: str) -> None:
+        """lolPing 的提示走气泡 / 托盘，不弹模态框卡住启动。"""
+        self.pet.say(message, 5200)
+        tray = getattr(self, "tray", None)
+        if tray is not None and tray.isVisible():
+            tray.showMessage("lolPing", message, QSystemTrayIcon.Warning, 6000)
 
     def build_tray(self) -> None:
         icon = QIcon(QPixmap(theme.resource("assets/tray.png")))

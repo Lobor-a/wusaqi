@@ -42,15 +42,17 @@ class LolPing(QObject):
         self.buffer = b''
         self.stopping = False
         self.pending = []
+        # 运行组件是否齐全：缺 Electron 时不做任何提示，静静保持不可用，
+        # 免得每次启动都弹模态框把人挡在门外。
+        self.available = self.electron.is_file() and self.script.is_file()
 
     def start(self):
         self.stopping = False
         self.socket.abort()
         self.pending.clear()
         self.status = {'enabled': False, 'helper': 'starting'}
-        if not self.electron.is_file() or not self.script.is_file():
+        if not self.available:
             self.status = {'enabled': False, 'helper': 'failed'}
-            self.error.emit('未找到 lolPing 运行组件。请按项目说明准备 Electron。')
             self.status_changed.emit()
             return
         self.process.start(str(self.electron), [str(self.script)])
@@ -62,6 +64,9 @@ class LolPing(QObject):
             self.command('retry')
 
     def command(self, action):
+        if not self.available:
+            self.error.emit('未找到 lolPing 运行组件：请安装 Electron，或用 TUTU_ELECTRON 指定 electron.exe。')
+            return
         if self.process.state() != QProcess.Running:
             self.error.emit('lolPing 未运行，请重新启动桌宠。')
             return
