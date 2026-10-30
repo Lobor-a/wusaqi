@@ -25,3 +25,7 @@ app/_*.py
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 源码运行时在根目录生成的配置
+reminders.json
+pet_config.json
