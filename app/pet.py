@@ -624,14 +624,18 @@ class PetWindow(QWidget):
             self._act(sm, label, lambda k=key: self.change_size(k),
                       checkable=True, checked=self.cfg.size == key)
 
-        self._act(m, "⚡  开机自动启动", self.toggle_autostart,
-                  checkable=True, checked=theme.autostart_enabled())
-
         m.addSeparator()
         self._act(m, "☀  叫醒它" if self.sleeping else "😴  去睡觉", self.toggle_sleep)
+
+        # 兔子站在屏幕底部，菜单只能往上翻，鼠标紧挨着的就是最后一项。
+        # 所以「退出」收进子菜单，别让它待在鼠标边上，免得手一抖把自己点没了。
+        more = m.addMenu("⚙  更多")
+        self._act(more, "⚡  开机自动启动", self.toggle_autostart,
+                  checkable=True, checked=theme.autostart_enabled())
+        more.addSeparator()
+        self._act(more, "❌  退出", self.quit_app)
+
         self._act(m, "🪂  回到地面", self.go_floor)
-        m.addSeparator()
-        self._act(m, "❌  退出", self.quit_app)
         return m
 
     def toggle_reminder(self, r: dict) -> None:
@@ -795,7 +799,18 @@ class PetWindow(QWidget):
         e.accept()
 
     def contextMenuEvent(self, e) -> None:
-        self.build_menu().exec(e.globalPos())
+        menu = self.build_menu()
+        pos = e.globalPos()
+        geo = self.screen().availableGeometry()
+        hint = menu.sizeHint()
+        x = min(max(geo.left() + 4, pos.x()), max(geo.left() + 4, geo.right() - hint.width() - 4))
+        y = pos.y()
+        if y + hint.height() > geo.bottom() - 4:
+            # 兔子站在屏幕底部，菜单多半放不下、会被 Qt 翻转上来，
+            # 那样菜单底边正好压在鼠标下，光标一开始就停在「退出」上，
+            # 手一抖就把自己点没了。这里主动把整张菜单挪到鼠标上方。
+            y = max(geo.top() + 4, pos.y() - hint.height() - 10)
+        menu.exec(QPoint(x, y))
 
 
 
