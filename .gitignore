@@ -31,3 +31,6 @@ desktop.ini
 # 源码运行时在根目录生成的配置
 reminders.json
 pet_config.json
+
+# 便携单文件版产物
+dist_portable/
