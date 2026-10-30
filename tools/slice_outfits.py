@@ -1,7 +1,14 @@
-"""把 4 张 3x3 的造型图切成 36 张透明 PNG，写入 app/assets/outfits/。
+"""把 4 张 3x3 的造型图切成 36 张透明 PNG，并做「本体归一化」。
 
-背景是纯绿 #90EE90，用「从边缘洪水填充 + 腐蚀」去底，
-这样连体睡衣那种本来就偏绿的布料不会被误删。
+归一化是重点：36 张图是分别画的，头大头小、落地高矮都不一样，
+直接换装会像换了一只兔子。所以每张都按 **头宽** 统一缩放，
+再把 **头心对齐画布中线**、**脚底对齐同一条基线**：
+
+    1. 边缘洪水填充去绿底（不按颜色抠，青蛙/恐龙装不会被掏空）
+    2. 收 1px + 柔化，去掉 JPEG 边缘的绿边
+    3. 量出「头最宽一行」的宽度与中心、内容最低点
+    4. 缩放 = 目标头宽 / 实测头宽（超宽的道具会反过来压低缩放，避免裁切）
+    5. 头心 x → 180，脚底 y → 344，画布固定 360x360
 
 用法：python tools/slice_outfits.py [图1 图2 图3 图4]
 不传参数时用下面的默认路径。
@@ -24,13 +31,15 @@ SHEETS = [
     r"C:\Users\Administrator\.workbuddy\clipboard-images\clipboard-2026-10-30T13-18-20-023Z-a4c01495.jpg",
 ]
 
-CANVAS = 360          # 和现有素材一致
-BASELINE = 344        # 现有素材内容底边大约在 y=344
-TARGET_H = 330        # 最高的那套在画布里占多高
+CANVAS = 360          # 画布边长（和旧素材一致）
+BASELINE = 344        # 脚底基线
+HEAD_W = 250          # 归一化后的统一头宽
+MAX_W = 352           # 缩放后内容最大宽度，超了就把缩放压下来（宁可小一点也别被裁）
+MAX_H = BASELINE      # 长耳朵 + 高帽子的套会被头宽放大到超高，这里封顶，避免裁掉耳朵
 
 
 def cutout(cell: Image.Image) -> Image.Image:
-    """去绿底，返回带 alpha 的图（未裁剪）。"""
+    """去绿底，返回带 alpha 的图。"""
     rgb = cell.convert("RGB")
     work = rgb.copy()
     w, h = work.size
@@ -49,19 +58,36 @@ def cutout(cell: Image.Image) -> Image.Image:
         for x in range(w):
             if bg[x, y] == (255, 0, 255):
                 mp[x, y] = 0
-
-    # 收 1px 再柔化，去掉 JPEG 边缘那圈绿边
     mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.0))
     out = rgb.convert("RGBA")
     out.putalpha(mask)
     return out
 
 
+def face_anchor(img: Image.Image) -> tuple[int, float, int, int]:
+    """量头部：返回（头宽、头心 x、头最宽行 y、内容底 y），坐标是 img 自己的像素。"""
+    px = img.split()[3].load()
+    w, h = img.size
+    rows = []
+    for y in range(h):
+        xs = [x for x in range(w) if px[x, y] > 120]
+        if xs:
+            rows.append((y, min(xs), max(xs)))
+    if not rows:
+        raise ValueError("空白图")
+    top, bottom = rows[0][0], rows[-1][0]
+    span = max(1, bottom - top)
+    lo, hi = top + int(span * 0.12), top + int(span * 0.58)
+    band = [r for r in rows if lo <= r[0] <= hi] or rows
+    y_head, x0, x1 = max(band, key=lambda r: r[2] - r[1])
+    return (x1 - x0), (x0 + x1) / 2, y_head, bottom
+
+
 def main() -> None:
     os.makedirs(ASSETS, exist_ok=True)
     os.makedirs(SHOTS, exist_ok=True)
-
     sheets = sys.argv[1:] or SHEETS
+
     items = []
     for sheet in sheets:
         im = Image.open(sheet).convert("RGB")
@@ -74,34 +100,57 @@ def main() -> None:
                 if bbox is None:
                     raise SystemExit("空图：" + sheet)
                 items.append(cut.crop(bbox))
-        print("切完", os.path.basename(sheet))
+        print("切完", os.path.basename(sheet), f"{len(items)} 套")
 
-    max_h = max(i.height for i in items)
-    s = TARGET_H / max_h
-    print(f"共 {len(items)} 套，最高 {max_h}px，统一缩放 {s:.3f}")
-
+    print(f"\n{'#':>3} {'头宽':>5} {'缩放':>6} {'贴图宽':>6} {'贴图高':>6} {'受限':>4}")
+    made = []
     for idx, cut in enumerate(items, start=1):
+        head_w, head_cx, head_y, bottom = face_anchor(cut)
+        s = HEAD_W / head_w
+        limit = ""
+        if cut.width * s > MAX_W:
+            s = MAX_W / cut.width
+            limit = "宽"
+        if cut.height * s > MAX_H:
+            s = MAX_H / cut.height
+            limit = "高"
         nw, nh = max(1, round(cut.width * s)), max(1, round(cut.height * s))
         im = cut.resize((nw, nh), Image.LANCZOS)
-        canvas = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-        x = (CANVAS - nw) // 2
-        y = min(BASELINE - nh, CANVAS - nh)
-        canvas.alpha_composite(im, (max(0, x), max(0, y)))
-        canvas.save(os.path.join(ASSETS, f"{idx:02d}.png"))
-        print(f"{idx:02d}.png  {nw}x{nh}")
 
-    # 预览表：紫底 + 2 倍放大，方便肉眼看绿边
-    cols, pad = 6, 8
-    size = 180
-    rows = (len(items) + cols - 1) // cols
-    sheet = Image.new("RGBA", (cols * (size + pad) + pad, rows * (size + pad) + pad), (120, 80, 160, 255))
-    for i in range(len(items)):
-        p = Image.open(os.path.join(ASSETS, f"{i + 1:02d}.png")).resize((size, size), Image.LANCZOS)
-        x = pad + (i % cols) * (size + pad)
-        y = pad + (i // cols) * (size + pad)
-        sheet.alpha_composite(p, (x, y))
+        # 头心 x 落在 180，脚底落在 344
+        x = round(CANVAS / 2 - head_cx * s)
+        y = round(BASELINE - nh - (cut.height - 1 - bottom) * s)
+        if nw <= CANVAS:
+            x = max(min(x, CANVAS - nw), 0)
+        else:
+            x = (CANVAS - nw) // 2
+        if nh <= CANVAS:
+            y = max(min(y, CANVAS - nh), 0)
+        else:
+            y = (CANVAS - nh) // 2
+
+        canvas = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+        canvas.alpha_composite(im, (x, y))
+        canvas.save(os.path.join(ASSETS, f"{idx:02d}.png"))
+        print(f"{idx:>3} {head_w:>5} {s:>6.3f} {nw:>6} {nh:>6} {limit:>4}")
+        made.append(canvas)
+
+    # 校验图 1：36 套叠在一起，看头是不是重合
+    over = Image.new("RGBA", (CANVAS, CANVAS), (250, 250, 252, 255))
+    for c in made:
+        over.alpha_composite(c)
+    over.save(os.path.join(SHOTS, "overlay_all.png"))
+
+    # 校验图 2：真实大小网格（浅灰底）
+    cols, pad, size = 6, 8, 222
+    rows_n = (len(made) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * (size + pad) + pad, rows_n * (size + pad) + pad), (236, 238, 243))
+    for i, c in enumerate(made):
+        t = Image.new("RGBA", (size, size), (236, 238, 243, 255))
+        t.alpha_composite(c.resize((size, size), Image.LANCZOS))
+        sheet.paste(t.convert("RGB"), (pad + (i % cols) * (size + pad), pad + (i // cols) * (size + pad)))
     sheet.save(os.path.join(SHOTS, "new_outfits.png"))
-    print("预览：", os.path.join(SHOTS, "new_outfits.png"))
+    print("校验图：", os.path.join(SHOTS, "overlay_all.png"), "/", os.path.join(SHOTS, "new_outfits.png"))
 
 
 if __name__ == "__main__":
