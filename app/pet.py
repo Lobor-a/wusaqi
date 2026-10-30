@@ -734,7 +734,29 @@ class PetWindow(QWidget):
             self.tray.setToolTip(tip)
 
     def quit_app(self) -> None:
-        _quit_trace("菜单里的「退出」")
+        # 曾经两次「兔子自己没了」，trace 都指向菜单里的这一项。
+        # 不管是误点还是外部按键，先问一句再走，默认按钮是「再陪我会儿」，
+        # 这样即便有幽灵回车也关不掉它。
+        reason = getattr(self, "_menu_reason", None)
+        _quit_trace(f"点了「退出」，菜单来源 reason={reason}")
+        QTimer.singleShot(0, self._confirm_quit)
+
+    def _confirm_quit(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("要关掉兔兔吗？")
+        box.setIcon(QMessageBox.Question)
+        box.setText("真的要让我回家了吗？")
+        box.setInformativeText("点「再见」我就关掉；下次开机我还认得回来的路。")
+        bye = box.addButton("👋  再见", QMessageBox.AcceptRole)
+        stay = box.addButton("🐰  再陪我会儿", QMessageBox.RejectRole)
+        box.setDefaultButton(stay)
+        box.setEscapeButton(stay)
+        box.exec()
+        if box.clickedButton() is bye:
+            self._do_quit()
+
+    def _do_quit(self) -> None:
+        _quit_trace("确认框里点了「再见」")
         self.cfg.pos = [self.x(), self.y()]
         self.cfg.last_seen = time.time()
         self.cfg.save()
@@ -800,6 +822,9 @@ class PetWindow(QWidget):
         e.accept()
 
     def contextMenuEvent(self, e) -> None:
+        # 记账：菜单是被鼠标右键打开的，还是被键盘 Menu 键 / 其它程序伪造的
+        r = e.reason()
+        self._menu_reason = getattr(r, "name", None) or str(r)
         menu = self.build_menu()
         pos = e.globalPos()
         geo = self.screen().availableGeometry()

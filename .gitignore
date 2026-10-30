@@ -16,6 +16,8 @@ dist/兔兔桌宠_lolPing版/
 dist/兔兔桌宠_lolPing版.exe
 dist/兔兔桌宠/
 error.log
+quit.log
+_old_petbuild*/
 
 # 开发期的截图 / 测试脚本
 app/_shots/
