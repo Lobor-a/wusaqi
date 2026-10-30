@@ -102,8 +102,16 @@ class LolPing(QObject):
                 elif item.get('type') == 'port':
                     self.socket.connectToHost(QHostAddress.LocalHost, int(item['port']))
                 elif item.get('type') == 'autostart':
-                    if not theme.set_autostart(bool(item['enabled'])):
+                    on = bool(item['enabled'])
+                    if not theme.set_autostart(on):
                         self.error.emit('无法更改开机启动设置。')
+                    else:
+                        # 和主配置保持一致：否则出现「注册表开了、配置里是关的」，
+                        # 下次启动又被当成残留项清掉，看着像开关失灵。
+                        cfg = getattr(self.pet, 'cfg', None)
+                        if cfg is not None:
+                            cfg.autostart = on
+                            cfg.save()
                 elif item.get('type') == 'error':
                     self.error.emit(item.get('message', 'lolPing 发生错误'))
             except (ValueError, KeyError):

@@ -54,7 +54,7 @@ class Config:
         "size": "mid",
         "on_top": True,
         "follow": False,
-        "walk": True,
+        "walk": False,
         "talk": True,
         "pos": None,
         "autostart": False,
@@ -88,6 +88,10 @@ class Config:
             self.outfit = 0
         if self.size not in theme.SIZES:
             self.size = "mid"
+        # 自由散步改成「手动启动」：每次打开都先老老实实站在那儿，
+        # 想让它走就在右键菜单里点「🚶 自由散步」。配置文件里的开关
+        # 只表示「这次运行要不要走」，不带到下一次启动。
+        self.walk = False
 
     def save(self) -> None:
         data = dict(self.raw)
@@ -612,7 +616,7 @@ class PetWindow(QWidget):
             rm.addAction(a)
 
         m.addSeparator()
-        for key, label in (("follow", "🎯  跟着鼠标走"), ("walk", "🚶  自由散步"), ("talk", "💬  偶尔自言自语")):
+        for key, label in (("follow", "🎯  跟着鼠标走"), ("walk", "🚶  自由散步（点开才走）"), ("talk", "💬  偶尔自言自语")):
             self._act(m, label, lambda k=key: self.toggle_flag(k),
                       checkable=True, checked=bool(getattr(self.cfg, key)))
 
@@ -849,6 +853,12 @@ class App:
         self.qapp.setWindowIcon(QIcon(theme.resource("assets/icon256.png")))
 
         self.cfg = Config()
+        # 开机不自启：配置里是关的，就顺手把注册表里可能残留的启动项清掉，
+        # 免得出现「明明没勾开机自启，开机它又自己蹦出来」。
+        if not getattr(self.cfg, "autostart", False) and theme.autostart_enabled():
+            theme.set_autostart(False)
+            self.cfg.autostart = False
+            self.cfg.save()
         self.pet = PetWindow(self.cfg)
 
         self.lolping = lolping.LolPing(self.pet)
