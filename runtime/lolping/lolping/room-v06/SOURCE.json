@@ -1,0 +1,11 @@
+{
+  "name": "lolping",
+  "version": "0.6.0-development",
+  "source": "https://github.com/darrenprx/lolPing/pull/131",
+  "commit": "94c3816089d1cecd7fb4f8646f75af1585952592",
+  "license": "MIT; see ../LICENSE",
+  "note": "Unreleased community contribution adapted for the desktop pet; GIF and animated WebP synchronization is not in the official 0.5.3 release.",
+  "upstreamMainSha256": "efeb7b4d54465f13a39c31b69684d8e087bec992f24c56740a9dc8a9da8d33f7",
+  "helperSha256": "3382637d5b3187dcf20808a850d6959797c50e8412964821fec4237256b0be42",
+  "adapter": "scripts/adapt-lolping-room.cjs"
+}

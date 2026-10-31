@@ -10,6 +10,13 @@ registerDesktopProtocols(protocol, { lolPing: true });
 const emit = (value) => process.stdout.write('TUTU_LOLPING ' + JSON.stringify(value) + '\n');
 app.setName('兔兔桌宠 lolPing');
 fs.mkdirSync(process.env.TUTU_LOLPING_DATA, { recursive: true });
+// Seed only a new profile; never overwrite the user's saved settings.
+try {
+  fs.writeFileSync(require('node:path').join(process.env.TUTU_LOLPING_DATA, 'settings.json'),
+    JSON.stringify({ pingSizePx: 60, rejoinRoom: true, lastRoomCode: '0GC4M3WEW8' }), { flag: 'wx' });
+} catch (error) {
+  if (error.code !== 'EEXIST') throw error;
+}
 app.setPath('userData', process.env.TUTU_LOLPING_DATA);
 let stopping = false;
 let server;

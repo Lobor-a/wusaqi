@@ -6,7 +6,7 @@ function registerDesktopProtocols(protocol, { bridge = false, lolPing = false } 
   if (lolPing) {
     schemes.push({
       scheme: 'lolping',
-      privileges: { standard: true, secure: true, supportFetchAPI: true },
+      privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
     });
   }
   if (bridge) {

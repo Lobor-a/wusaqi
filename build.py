@@ -48,6 +48,8 @@ def main() -> int:
         NAME,
         "--specpath",
         os.path.join(HERE, "build"),
+        "--distpath",
+        os.path.join(HERE, "build", "package"),
         "--paths",
         APP,
         "--add-data",
@@ -76,7 +78,12 @@ def main() -> int:
     )
     r = subprocess.run(args, cwd=HERE, env=env)
     if r.returncode == 0:
-        exe = os.path.join(HERE, "dist", NAME, NAME + ".exe")
+        # Build in staging: PyInstaller cleans its destination. Copying the result
+        # preserves the user's settings and custom emotes beside the old EXE.
+        staged = os.path.join(HERE, "build", "package", NAME)
+        dest = os.path.join(HERE, "dist", NAME)
+        shutil.copytree(staged, dest, dirs_exist_ok=True)
+        exe = os.path.join(dest, NAME + ".exe")
         print("OK ->", exe, os.path.getsize(exe) // 1024 // 1024, "MB")
     return r.returncode
 

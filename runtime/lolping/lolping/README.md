@@ -1,5 +1,7 @@
 # lolPing 桌宠集成
 
+兔兔桌宠当前使用 `room-v06/` 动图同步版，来源和许可见 `room-v06/SOURCE.json`。此版本从 pet 项目的适配构建复用；`vendor/` 和 `native/` 保留为旧版资源。动图支持及网络说明见项目根目录 README。
+
 来源：本机 `D:\work\lolPing` 的 lolPing 0.5.0，作者 Danrui Meng。上游项目：https://github.com/darrenprx/lolPing 。来源版本及安装包 ASAR 的 SHA-256 保存在 `SOURCE.json`。
 
 `vendor/` 保留上游打包的页面、预加载脚本和资源。`vendor/out/main/integrated.cjs` 由 `scripts/import-lolping.mjs` 生成；适配逻辑集中在导入脚本中，避免直接修改大型生成文件。原版 `index.js` 保留用于对照，集成入口不会执行它。
