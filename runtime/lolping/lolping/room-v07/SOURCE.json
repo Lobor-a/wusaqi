@@ -1,0 +1,12 @@
+{
+  "name": "lolping",
+  "version": "0.6.0-development-pet-sound",
+  "source": "https://github.com/darrenprx/lolPing/pull/131",
+  "commit": "94c3816089d1cecd7fb4f8646f75af1585952592",
+  "license": "MIT; see ../LICENSE",
+  "note": "Desktop-pet extension adds bounded, authenticated room sound transfer. Both peers need this version.",
+  "sourcePatch": "../../lolping-sound-source/changes.patch",
+  "upstreamMainSha256": "0de320ca21b3a7c111ea5acf48b52067cf8a5c887dba585eb53cca10f5055e85",
+  "helperSha256": "3382637d5b3187dcf20808a850d6959797c50e8412964821fec4237256b0be42",
+  "adapter": "../../adapt-lolping-room-v07.cjs"
+}

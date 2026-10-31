@@ -1,0 +1,602 @@
+diff --git a/src/main/appProtocol.ts b/src/main/appProtocol.ts
+index 44ea252..28e33e4 100644
+--- a/src/main/appProtocol.ts
++++ b/src/main/appProtocol.ts
+@@ -30,7 +30,7 @@ export function resolveEmoteFile(dirs: readonly string[], urlPath: string): stri
+   const m = EMOTE_URL_RE.exec(urlPath);
+   if (!m) return null;
+   const [, hash, kind] = m;
+-  if (hash.length === 64 && kind !== 'anim') return null;
++  if (hash.length === 64 && kind !== 'anim' && kind !== 'sound') return null;
+   const names = kind === 'webp' ? [`${hash}.webp`]
+     : kind === 'anim' ? [`${hash}.anim.gif`, `${hash}.anim.webp`, `${hash}.webp`]
+       : AUDIO_TYPES.map((t) => `${hash}.sound.${t}`);
+diff --git a/src/main/emoteCache.ts b/src/main/emoteCache.ts
+index 4b3937b..2a7f64e 100644
+--- a/src/main/emoteCache.ts
++++ b/src/main/emoteCache.ts
+@@ -1,7 +1,8 @@
+ import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+ import { join } from 'node:path';
+-import { ANIM_MAX_BYTES, HASH_RE } from '../shared/emotes';
++import { ANIM_MAX_BYTES, SOUND_MAX_BYTES, HASH_RE } from '../shared/emotes';
+ import { sniffImage } from '../shared/imageSniff';
++import { sniffAudio } from '../shared/audioSniff';
+ import { ANIMATION_HASH_RE } from '../shared/roomProtocol';
+ import { renameWithRetry } from './settingsStore';
+ 
+@@ -14,6 +15,7 @@ const NAME_RE = /^([0-9a-f]{32})\.webp$/;
+ export const ANIMATION_CACHE_MAX_BYTES = 50 * 1024 * 1024;
+ export const ANIMATION_CACHE_MAX_FILES = 32;
+ const ANIMATION_NAME_RE = /^([0-9a-f]{64})\.anim\.(gif|webp)$/;
++const SOUND_NAME_RE = /^([0-9a-f]{64})\.sound\.(ogg|mp3|wav)$/;
+ 
+ /** A capped cache of verified room stills or animation originals, evicted by last use. */
+ export class EmoteCache {
+@@ -27,7 +29,7 @@ export class EmoteCache {
+   private broken = false;
+   private readonly writes = new Map<string, Promise<boolean>>();
+ 
+-  constructor(dir: string, private readonly now: () => number, private readonly animations = false) {
++  constructor(dir: string, private readonly now: () => number, private readonly animations: boolean | 'sound' = false) {
+     this.dir = dir;
+   }
+ 
+@@ -57,10 +59,10 @@ export class EmoteCache {
+ 
+   private async write(hash: string, bytes: Uint8Array): Promise<boolean> {
+     if (!(this.animations ? ANIMATION_HASH_RE : HASH_RE).test(hash)) return false;
+-    const format = this.animations ? sniffImage(bytes) : 'webp';
+-    if (format !== 'gif' && format !== 'webp') return false;
+-    if (this.animations && bytes.length > ANIM_MAX_BYTES) return false;
+-    const name = this.animations ? `${hash}.anim.${format}` : `${hash}.webp`;
++    const format = this.animations === 'sound' ? sniffAudio(bytes) : this.animations ? sniffImage(bytes) : 'webp';
++    if (this.animations === 'sound' ? !format || bytes.length > SOUND_MAX_BYTES : format !== 'gif' && format !== 'webp') return false;
++    if (this.animations === true && bytes.length > ANIM_MAX_BYTES) return false;
++    const name = this.animations === 'sound' ? `${hash}.sound.${format}` : this.animations ? `${hash}.anim.${format}` : `${hash}.webp`;
+     const tmp = join(this.dir, `${name}.tmp`);
+     try {
+       await mkdir(this.dir, { recursive: true });
+@@ -89,7 +91,7 @@ export class EmoteCache {
+     }
+     const entries = new Map<string, { size: number; at: number; name: string }>();
+     for (const name of names) {
+-      const m = (this.animations ? ANIMATION_NAME_RE : NAME_RE).exec(name);
++      const m = (this.animations === 'sound' ? SOUND_NAME_RE : this.animations ? ANIMATION_NAME_RE : NAME_RE).exec(name);
+       const tmp = name.endsWith('.tmp');
+       if (!m && !tmp) continue;
+       try {
+diff --git a/src/main/emoteLibrary.ts b/src/main/emoteLibrary.ts
+index 2592bda..e310017 100644
+--- a/src/main/emoteLibrary.ts
++++ b/src/main/emoteLibrary.ts
+@@ -96,6 +96,21 @@ export class EmoteLibrary {
+     return null;
+   }
+ 
++  /** Reads only a valid, bounded sound belonging to an imported emote. */
++  async sound(hash: string): Promise<Uint8Array | null> {
++    if (!isCustomRef(`c:${hash}`)) return null;
++    for (const name of soundNames(hash)) {
++      try {
++        const file = join(this.dir, name);
++        const size = await stat(file);
++        if (!size.isFile() || size.size > SOUND_MAX_BYTES) continue;
++        const bytes = new Uint8Array(await readFile(file));
++        if (checkSound(bytes) === null) return bytes;
++      } catch { /* Missing files are normal. */ }
++    }
++    return null;
++  }
++
+   async save(file: EmoteFile, existing: readonly CustomEmote[]): Promise<SaveResult> {
+     const f = emoteFileFrom(file);
+     if (!f) return fail('type');
+diff --git a/src/main/index.ts b/src/main/index.ts
+index 8d5519f..461c299 100644
+--- a/src/main/index.ts
++++ b/src/main/index.ts
+@@ -33,6 +33,7 @@ import { registerAppScheme, serveAppScheme } from './appProtocol';
+ import { resolveTarget, toShared } from './displayNumbers';
+ import { EmoteCache } from './emoteCache';
+ import { EmoteAnimationTransfer } from './emoteAnimationTransfer';
++import { EmoteSoundTransfer } from './emoteSoundTransfer';
+ import { EmoteLibrary, resolveEmoteArt } from './emoteLibrary';
+ import { EmoteTransfer } from './emoteTransfer';
+ import { RoomMediaBridge } from './roomMediaBridge';
+@@ -208,11 +209,13 @@ function start(): void {
+   const library = new EmoteLibrary(join(settingsDir(), 'emotes'));
+   const cache = new EmoteCache(join(settingsDir(), 'emote-cache'), Date.now);
+   const animationCache = new EmoteCache(join(settingsDir(), 'emote-animation-cache'), Date.now, true);
++  const soundCache = new EmoteCache(join(settingsDir(), 'emote-sound-cache'), Date.now, 'sound');
+   void cache.present();
+   void animationCache.present();
++  void soundCache.present();
+   serveAppScheme({
+     rendererRoot: process.env.ELECTRON_RENDERER_URL ? null : join(__dirname, '../renderer'), // development pages come from Vite
+-    emoteDirs: () => [library.dir, cache.dir, animationCache.dir], // animation originals have independent 64-hex names
++    emoteDirs: () => [library.dir, cache.dir, animationCache.dir, soundCache.dir],
+   });
+   if (IS_MAC) {
+     app.dock?.hide(); // a menu bar app: the Dock icon only shows while settings are open
+@@ -233,6 +236,7 @@ function start(): void {
+   let mate: Mate | null = null; // the teammate, while its feature is on
+   let mateFailed = false; // it couldn't start: its ask key stays off for this session
+   let animationTransfer: EmoteAnimationTransfer | undefined;
++  let soundTransfer: EmoteSoundTransfer | undefined;
+   /** The settings as the helper and overlays use them: without the teammate once it failed to start. */
+   const effective = (s: Settings): Settings => (mateFailed ? { ...s, features: { ...s.features, teammate: false } } : s);
+ 
+@@ -246,7 +250,9 @@ function start(): void {
+       });
+       if (remote && peer && isCustomRef(ref) && settings.friendEmotes) {
+         const url = animationTransfer?.url(peer, customHash(ref));
+-        if (url) return { kind: 'custom', url, animated: true, stillUrl: customStillUrl(customHash(ref)), fx: 0 };
++        const sound = soundTransfer?.url(peer, customHash(ref));
++        if (url) return { kind: 'custom', url, animated: true, stillUrl: customStillUrl(customHash(ref)), fx: 0, ...(sound ? { sound } : {}) };
++        if (art.kind === 'custom' && sound) return { ...art, sound };
+       }
+       return art;
+     },
+@@ -313,6 +319,8 @@ function start(): void {
+     announceEmotes: () => (featureOn(settings, 'emotes') ? announcedEmoteHashes(settings.emoteWheel, settings.clickEmoteId) : []),
+     animationSync: () => settings.friendEmotes && featureOn(settings, 'emotes'),
+     internetAnimation: () => settings.roomMedia.enabled && settings.friendEmotes && featureOn(settings, 'emotes'),
++    soundSync: () => settings.friendEmotes && featureOn(settings, 'emotes'),
++    internetSound: () => settings.roomMedia.enabled && settings.friendEmotes && featureOn(settings, 'emotes'),
+     media: { status: (peer) => media?.status(peer) ?? 'off', send: (peer, packet) => media?.sendPacket(peer, packet) },
+   });
+   media = new RoomMediaBridge({
+@@ -366,6 +374,23 @@ function start(): void {
+   room.on('anim-info', (m: Parameters<EmoteAnimationTransfer['onInfo']>[0]) => animations.onInfo(m));
+   room.on('anim-chunk', (c: Parameters<EmoteAnimationTransfer['onChunk']>[0]) => animations.onChunk(c));
+   room.on('memberGone', (peer: string) => animations.memberGone(peer));
++  const sounds = new EmoteSoundTransfer({
++    now: Date.now,
++    enabled: () => enabled && settings.friendEmotes && featureOn(settings, 'emotes') && !settings.roomMuted,
++    canPeer: (peer) => room.canSyncSound(peer),
++    announced: () => announcedEmoteHashes(settings.emoteWheel, settings.clickEmoteId),
++    sound: (hash) => library.sound(hash),
++    have: (hash) => soundCache.has(hash),
++    put: (hash, bytes) => soundCache.put(hash, bytes),
++    touch: (hash) => soundCache.touch(hash),
++    send: (peer, body) => room.sendSound(peer, body),
++  });
++  soundTransfer = sounds;
++  room.on('soundEmotes', (peer: string, hashes: string[]) => sounds.announced(peer, hashes));
++  room.on('sound-want', (w: Parameters<EmoteSoundTransfer['onWant']>[0]) => { void sounds.onWant(w); });
++  room.on('sound-info', (m: Parameters<EmoteSoundTransfer['onInfo']>[0]) => sounds.onInfo(m));
++  room.on('sound-chunk', (c: Parameters<EmoteSoundTransfer['onChunk']>[0]) => sounds.onChunk(c));
++  room.on('memberGone', (peer: string) => sounds.memberGone(peer));
+   const roomState = (): RoomState => {
+     const all = screen.getAllDisplays();
+     return {
+@@ -1121,7 +1146,7 @@ function start(): void {
+   store.on('change', (s: Settings) => {
+     const previous = settings;
+     settings = s;
+-    if (JSON.stringify(s.customEmotes) !== JSON.stringify(previous.customEmotes)) animations.invalidateSources();
++    if (JSON.stringify(s.customEmotes) !== JSON.stringify(previous.customEmotes)) { animations.invalidateSources(); sounds.invalidateSources(); }
+     sendConfig();
+     syncRoomText();
+     syncRoomVotes();
+@@ -1177,6 +1202,7 @@ function start(): void {
+ 
+   registerSettingsIpc({
+     store,
++    soundChanged: () => sounds.invalidateSources(),
+     library,
+     getStatus: status,
+     setEnabled,
+@@ -1315,6 +1341,7 @@ function start(): void {
+     room.quit(); // says bye, so the others see "left" instead of waiting for a timeout
+     transfer.stop();
+     animations.stop();
++    sounds.stop();
+     media?.stop();
+     stopWaitingForAccess();
+     const mateStopped = stopMate();
+diff --git a/src/main/roomManager.ts b/src/main/roomManager.ts
+index f2520dd..ef02761 100644
+--- a/src/main/roomManager.ts
++++ b/src/main/roomManager.ts
+@@ -110,7 +110,9 @@ export interface RoomDeps {
+   announceEmotes(): readonly string[];
+   /** Optional LAN animation extension; omitted by apps and tools that only transfer stills. */
+   animationSync?(): boolean;
++  soundSync?(): boolean;
+   internetAnimation?(): boolean;
++  internetSound?(): boolean;
+   media?: {
+     status(peer: string): MediaStatus;
+     send(peer: string, packet: Uint8Array): void;
+@@ -132,7 +134,9 @@ interface Member {
+   /** The custom emote hashes their last presence announced. */
+   em: string[];
+   animationSync: boolean;
++  soundSync: boolean;
+   internetAnimation: boolean;
++  internetSound: boolean;
+   directKey: Buffer | null;
+   directPublic: string | null;
+   publicEm: string[];
+@@ -290,7 +294,7 @@ export class RoomManager extends EventEmitter {
+     const peers = r.mode === 'selected'
+       ? [...new Set(r.peers.filter((p): p is string => typeof p === 'string' && Boolean(this.members.get(p)?.directKey)))] : [];
+     this.audience = { mode: r.mode, peers };
+-    this.directQueue = this.directQueue.filter((q) => ['rtc', 'want', 'anim-want'].includes(String(q.body.t)));
++    this.directQueue = this.directQueue.filter((q) => ['rtc', 'want', 'anim-want', 'sound-want'].includes(String(q.body.t)));
+     for (const sent of this.privateLists.values()) sent.at = -Infinity;
+     this.profileChanged();
+   }
+@@ -320,7 +324,7 @@ export class RoomManager extends EventEmitter {
+   /** Pairwise encryption works over LAN and room relays. It never falls back to a room-key packet. */
+   sendDirect(peer: string, body: Record<string, unknown>, keep = 0): boolean {
+     if (!this.keys || this.phase === 'idle' || this.paused || !this.members.get(peer)?.directKey) return false;
+-    if (['chunk', 'anim-info', 'anim-chunk'].includes(String(body.t)) && !this.canSendTo(peer)) return false;
++    if (['chunk', 'anim-info', 'anim-chunk', 'sound-info', 'sound-chunk'].includes(String(body.t)) && !this.canSendTo(peer)) return false;
+     if (this.tryDirect(peer, body, keep)) return true;
+     if (!this.routeKind(peer) || this.directQueue.length >= 256) return false;
+     if (body.t === 'emote-list') this.directQueue = this.directQueue.filter((q) => q.peer !== peer || q.body.t !== body.t);
+@@ -351,7 +355,7 @@ export class RoomManager extends EventEmitter {
+     const now = this.deps.now();
+     this.directQueue = this.directQueue.filter((q) => {
+       if (q.expires <= now || this.paused || !this.members.has(q.peer)) return false;
+-      if (!['rtc', 'want', 'anim-want', 'emote-list'].includes(String(q.body.t)) && !this.canSendTo(q.peer)) return false;
++      if (!['rtc', 'want', 'anim-want', 'sound-want', 'emote-list'].includes(String(q.body.t)) && !this.canSendTo(q.peer)) return false;
+       return !this.tryDirect(q.peer, q.body, q.keep);
+     });
+   }
+@@ -362,12 +366,14 @@ export class RoomManager extends EventEmitter {
+ 
+   private canMediaPeer(peer: string): boolean {
+     const m = this.members.get(peer);
+-    return Boolean(this.internetAllowed && this.deps.internetAnimation?.() && m?.directKey && m.internetAnimation &&
++    return Boolean(this.internetAllowed && m?.directKey &&
++      ((this.deps.internetAnimation?.() && m.internetAnimation) || (this.deps.internetSound?.() && m.internetSound)) &&
+       m.status === 'on' && !m.muted && !m.needsUpdate && !this.paused && !this.roomMuted && this.routeKind(peer) === 'shared');
+   }
+ 
+   mediaChanged(): void {
+     for (const m of this.members.values()) this.emit('animationEmotes', m.peer, this.canSyncAnimation(m.peer) ? [...m.em] : []);
++    for (const m of this.members.values()) this.emit('soundEmotes', m.peer, this.canSyncSound(m.peer) ? [...m.em] : []);
+     this.emitState();
+   }
+ 
+@@ -422,6 +428,23 @@ export class RoomManager extends EventEmitter {
+     } catch { /* A vanished channel leaves the still in place. */ }
+   }
+ 
++  /** Sound originals use the same signed LAN or encrypted media route as animations. */
++  sendSound(peer: string, body: Record<string, unknown>): void {
++    if (!this.canSyncSound(peer)) return;
++    if (body.t !== 'sound-want' && !this.canSendTo(peer)) return;
++    if (this.routeKind(peer) === 'lan') {
++      if (this.audience.mode === 'all') this.sendToLan(peer, body);
++      else this.sendDirect(peer, body);
++      return;
++    }
++    const key = this.members.get(peer)?.directKey;
++    if (!key) return;
++    try {
++      const bytes = encodeMessage({ peer: this.self, seq: ++this.seq, ts: this.deps.now(), ...body } as RoomMessage);
++      this.deps.media?.send(peer, sealDirect(key, this.self, peer, bytes));
++    } catch { /* A vanished channel leaves the image visible without sound. */ }
++  }
++
+   /** Removes a member and ignores that peer ID for the rest of the session, as if it had said bye. */
+   kick(peer: string): void {
+     const m = this.members.get(peer);
+@@ -457,7 +480,14 @@ export class RoomManager extends EventEmitter {
+     const m = this.members.get(peer);
+     return Boolean(this.deps.animationSync?.() && m?.pk && m.animationSync && m.status === 'on' &&
+       !m.muted && !m.needsUpdate && !this.paused && !this.roomMuted && (this.routeKind(peer) === 'lan' ||
+-        this.canMediaPeer(peer) && this.deps.media?.status(peer) === 'connected'));
++        this.deps.internetAnimation?.() && m.internetAnimation && this.canMediaPeer(peer) && this.deps.media?.status(peer) === 'connected'));
++  }
++
++  canSyncSound(peer: string): boolean {
++    const m = this.members.get(peer);
++    return Boolean(this.deps.soundSync?.() && m?.pk && m.soundSync && m.status === 'on' &&
++      !m.muted && !m.needsUpdate && !this.paused && !this.roomMuted && (this.routeKind(peer) === 'lan' ||
++        this.deps.internetSound?.() && m.internetSound && this.canMediaPeer(peer) && this.deps.media?.status(peer) === 'connected'));
+   }
+ 
+   /** Seals and sends `body` straight to one member over its LAN path. Nothing goes when LAN isn't what reaches them. */
+@@ -692,7 +722,7 @@ export class RoomManager extends EventEmitter {
+     const direct = Boolean(header && pair && header.from === msg.peer);
+     if (header && !direct) return;
+     if ((msg.t === 'rtc' || msg.t === 'emote-list') && !direct) return;
+-    if (media && msg.t !== 'anim-want' && msg.t !== 'anim-info' && msg.t !== 'anim-chunk') return;
++    if (media && msg.t !== 'anim-want' && msg.t !== 'anim-info' && msg.t !== 'anim-chunk' && msg.t !== 'sound-want' && msg.t !== 'sound-info' && msg.t !== 'sound-chunk') return;
+     // Chunks are never signed (a signature wouldn't fit), and needn't be: a still is checked against its hash when
+     // assembled. So whoever a chunk claims to be from, it never moves a replay window, a liveness clock or a route.
+     if (msg.t === 'chunk') {
+@@ -709,15 +739,17 @@ export class RoomManager extends EventEmitter {
+       return;
+     }
+     const animation = msg.t === 'anim-want' || msg.t === 'anim-info' || msg.t === 'anim-chunk';
+-    if (animation) {
+-      if (!(sig || direct) || !media && (t.shared || t.kind !== 'lan') || msg.to !== this.self || !this.canSyncAnimation(msg.peer)) return;
+-      const chunk = msg.t === 'anim-chunk';
++    const sound = msg.t === 'sound-want' || msg.t === 'sound-info' || msg.t === 'sound-chunk';
++    if (animation || sound) {
++      if (!(sig || direct) || !media && (t.shared || t.kind !== 'lan') || msg.to !== this.self ||
++          !(animation ? this.canSyncAnimation(msg.peer) : this.canSyncSound(msg.peer))) return;
++      const chunk = msg.t === 'anim-chunk' || msg.t === 'sound-chunk';
+       if (!this.animationLimiter.allow(`${msg.peer}:${chunk ? 'chunk' : 'control'}`, chunk ? 100 : 10)) return;
+       // Bulk traffic must not advance the replay window or keep a vanished member's route alive.
+       // The transfer only accepts requested indexes for the signed, content-addressed original.
+-      if (msg.t === 'anim-want' && !this.canSendTo(msg.peer)) return;
++      if ((msg.t === 'anim-want' || msg.t === 'sound-want') && !this.canSendTo(msg.peer)) return;
+       if (chunk) {
+-        this.emit('anim-chunk', msg);
++        this.emit(msg.t, msg);
+         return;
+       }
+     }
+@@ -746,9 +778,10 @@ export class RoomManager extends EventEmitter {
+       m.em = [...new Set([...m.publicEm, ...m.privateEm])];
+       if (!this.paused) this.emit('emotes', m.peer, [...m.em]);
+       this.emit('animationEmotes', m.peer, this.canSyncAnimation(m.peer) ? [...m.em] : []);
++      this.emit('soundEmotes', m.peer, this.canSyncSound(m.peer) ? [...m.em] : []);
+       return;
+     }
+-    if (msg.t === 'anim-want' || msg.t === 'anim-info') {
++    if (msg.t === 'anim-want' || msg.t === 'anim-info' || msg.t === 'sound-want' || msg.t === 'sound-info') {
+       this.emit(msg.t, msg);
+       return;
+     }
+@@ -812,9 +845,9 @@ export class RoomManager extends EventEmitter {
+       if (!t.shared && this.membersAt(t.kind, key) >= 2) return;
+       m = {
+         peer: msg.peer, name: msg.name, color: msg.color, rgb: msg.rgb ?? null, status: msg.status,
+-        needsUpdate: false, noEmotes: false, noChat: false, textOff: false, votesOff: false, muted: false, em: [], animationSync: false,
++        needsUpdate: false, noEmotes: false, noChat: false, textOff: false, votesOff: false, muted: false, em: [], animationSync: false, soundSync: false,
+         firstSeen: this.deps.now(), viaInternet: false, paths: {}, pk: null,
+-        internetAnimation: false, directKey: null, directPublic: null, publicEm: [], privateEm: [],
++        internetAnimation: false, internetSound: false, directKey: null, directPublic: null, publicEm: [], privateEm: [],
+       };
+       this.members.set(m.peer, m);
+       this.aloneSince = null;
+@@ -839,13 +872,16 @@ export class RoomManager extends EventEmitter {
+     m.publicEm = msg.em;
+     m.em = [...new Set([...m.publicEm, ...m.privateEm])];
+     m.animationSync = msg.ea === 1 && pk !== null;
++    m.soundSync = msg.es === 1 && pk !== null;
+     m.internetAnimation = msg.er === 1 && pk !== null;
++    m.internetSound = msg.et === 1 && pk !== null;
+     // Every presence, so a hash whose assembly gave up is asked for again: EmoteTransfer skips what is already here.
+     // A paused lolPing neither fetches nor serves stills; the next presence after unpausing starts prefetch again.
+     if (!this.paused) this.emit('emotes', m.peer, [...m.em]);
+     this.heard(m, t, key);
+     this.announcePrivate(m);
+     this.emit('animationEmotes', m.peer, this.canSyncAnimation(m.peer) ? [...m.em] : []);
++    this.emit('soundEmotes', m.peer, this.canSyncSound(m.peer) ? [...m.em] : []);
+     if (!this.answered.has(key)) {
+       this.answered.add(key);
+       if (t.shared) this.announce(t); // everyone hears it anyway, so it's an ordinary presence
+@@ -934,7 +970,9 @@ export class RoomManager extends EventEmitter {
+       em: this.audience.mode === 'all' ? [...this.deps.announceEmotes()] : [], pk: this.identity.pk.toString('base64'),
+       dk: this.directIdentity.publicKey,
+       ...(this.deps.internetAnimation?.() && this.internetAllowed ? { er: 1 } : {}),
++      ...(this.deps.internetSound?.() && this.internetAllowed ? { et: 1 } : {}),
+       ...(this.deps.animationSync?.() ? { ea: 1 } : {}),
++      ...(this.deps.soundSync?.() ? { es: 1 } : {}),
+       // Left out when nothing is off, so a presence to an older peer carries nothing new.
+       ...(p.nf.length ? { nf: [...p.nf] } : {}),
+       // Left out rather than sent as null: a peer on an older build ignores it either way, and this keeps the packet small.
+diff --git a/src/main/settingsIpc.ts b/src/main/settingsIpc.ts
+index 6cce91b..8a2f48c 100644
+--- a/src/main/settingsIpc.ts
++++ b/src/main/settingsIpc.ts
+@@ -26,6 +26,7 @@ export const LATEST_RELEASE_URL = `${PROJECT_URL}/releases/latest`;
+ 
+ export interface SettingsIpcDeps {
+   store: SettingsStore;
++  soundChanged?(): void;
+   /** Imported emotes' files. Only the import, remove, sound and fx handlers change `customEmotes`. */
+   library: EmoteLibrary;
+   getStatus(): AppStatus;
+@@ -172,6 +173,7 @@ export function registerSettingsIpc(d: SettingsIpcDeps): void {
+     if (raw !== null && !(raw instanceof Uint8Array)) return { ok: false, error: 'type' };
+     const error = await d.library.setSound(id, raw);
+     if (error) return { ok: false, error };
++    d.soundChanged?.();
+     const withSound = ({ sound: _old, ...c }: CustomEmote): CustomEmote => (raw === null ? c : { ...c, sound: true });
+     d.store.update({ customEmotes: d.store.get().customEmotes.map((c) => (c.id === id ? withSound(c) : c)) });
+     return { ok: true };
+diff --git a/src/renderer/overlay/soundBank.ts b/src/renderer/overlay/soundBank.ts
+index 245fa8c..8719f05 100644
+--- a/src/renderer/overlay/soundBank.ts
++++ b/src/renderer/overlay/soundBank.ts
+@@ -27,6 +27,8 @@ export class SoundBank {
+   /** Plays the sound at `url`, loading it under that key the first time. A file that won't load plays nothing. */
+   async playUrl(url: string, volume01: number): Promise<void> {
+     if (!this.buffers.has(url)) await this.load([{ key: url, url }]);
++    // Room peers can send a valid audio file that did not pass the local picker duration check.
++    if ((this.buffers.get(url)?.duration ?? 0) > 5.05) { this.buffers.delete(url); return; }
+     this.play(url, volume01);
+   }
+ 
+diff --git a/src/shared/i18n.ts b/src/shared/i18n.ts
+index af30b32..1189edb 100644
+--- a/src/shared/i18n.ts
++++ b/src/shared/i18n.ts
+@@ -522,7 +522,7 @@ const en = {
+   allEmotesDesc: 'Click to preview. Drag onto the wheel to assign, or click an emote and then a slot.',
+   removeImage: (name: string) => `Remove ${name}`,
+   addImage: 'Add image…',
+-  addImageDesc: 'PNG, JPG, GIF or WebP, up to 8 MB and 8192 pixels on the longest side. You can also drop images on the list. The speaker on one of your images gives it a sound: MP3, OGG or WAV, up to 1 MB and 5 seconds. It plays on your computer only.',
++  addImageDesc: 'PNG, JPG, GIF or WebP, up to 8 MB and 8192 pixels on the longest side. You can add an MP3, OGG or WAV sound up to 1 MB and 5 seconds; compatible room members can hear it.',
+   addSound: (name: string) => `Add a sound to ${name}`,
+   removeSound: (name: string) => `Remove the sound from ${name}`,
+   soundErrType: (file: string) => `${file} isn’t an MP3, OGG or WAV sound.`,
+@@ -641,7 +641,7 @@ const en = {
+   } satisfies Record<FeatureId, string>,
+   featureNeedsRooms: 'Needs Rooms to be on.',
+   friendEmotes: 'Show friends’ custom emotes',
+-  friendEmotesDesc: 'Images are cached locally. GIF and animated WebP up to 5 MiB sync over LAN, or over the internet with internet animations on at both ends. Until ready or with older apps, you see the still. Sounds stay local.',
++  friendEmotesDesc: 'Images and custom sounds are cached locally. Animations and sounds sync over LAN or with internet animations on at both ends. Older apps show a still and cannot play custom sounds.',
+   roomAudience: 'Send to',
+   roomAudienceDesc: 'Applies to pings, emotes, text and alive messages for this room session. Votes still reach the whole room. Previously cached images cannot be recalled.',
+   roomAudienceModes: { all: 'Everyone', selected: 'Selected members', self: 'Only myself' },
+@@ -955,7 +955,7 @@ const zh: Strings = {
+   allEmotesDesc: '单击可预览。拖到轮盘上即可分配，也可以先单击表情，再单击位置。',
+   removeImage: (name) => `移除“${name}”`,
+   addImage: '添加图片…',
+-  addImageDesc: '支持 PNG、JPG、GIF 和 WebP，最大 8 MB，最长边不超过 8192 像素。也可以把图片拖到列表上。点自己图片上的喇叭可以给它加声音：MP3、OGG 或 WAV，最大 1 MB，最长 5 秒，只在你自己的电脑上播放。',
++  addImageDesc: '支持 PNG、JPG、GIF 和 WebP，最大 8 MB，最长边不超过 8192 像素。点喇叭可添加 MP3、OGG 或 WAV 音效，最大 1 MB、最长 5 秒；兼容版本的房间成员也能听到。',
+   addSound: (name) => `给“${name}”添加声音`,
+   removeSound: (name) => `移除“${name}”的声音`,
+   soundErrType: (file) => `“${file}”不是 MP3、OGG 或 WAV 声音。`,
+@@ -1072,7 +1072,7 @@ const zh: Strings = {
+   } satisfies Record<FeatureId, string>,
+   featureNeedsRooms: '需要先打开房间。',
+   friendEmotes: '显示好友的自定义表情',
+-  friendEmotesDesc: '图片会缓存在本地。最大 5 MiB 的 GIF 和动态 WebP 可通过局域网同步，双方开启互联网动图后也可通过互联网同步。下载完成前或对方版本较旧时显示静态图。声音只在本机播放。',
++  friendEmotesDesc: '图片和自定义音效会缓存在本地。动图和音效可通过局域网同步；双方开启互联网动图后也可通过互联网同步。旧版本无法播放自定义音效。',
+   roomAudience: '发送给',
+   roomAudienceDesc: '对本次入房的信号、表情、文字和存活提示生效。投票仍发送给全房间。已经缓存的图片无法撤回。',
+   roomAudienceModes: { all: '所有人', selected: '指定成员', self: '仅自己' },
+diff --git a/src/shared/roomProtocol.ts b/src/shared/roomProtocol.ts
+index 352ea79..12959e1 100644
+--- a/src/shared/roomProtocol.ts
++++ b/src/shared/roomProtocol.ts
+@@ -1,4 +1,5 @@
+-import { ANIM_MAX_BYTES, ANNOUNCED_MAX, HASH_RE, isEmoteFx, isEmoteRefShape, type EmoteRef } from './emotes';
++import { ANIM_MAX_BYTES, SOUND_MAX_BYTES, ANNOUNCED_MAX, HASH_RE, isEmoteFx, isEmoteRefShape, type EmoteRef } from './emotes';
++import { AUDIO_TYPES } from './audioSniff';
+ import { isPingId, type PingId } from './pings';
+ import { isTagColor, isTagRgb, type TagRgb } from './roomColors';
+ 
+@@ -47,6 +48,10 @@ export interface PresenceMsg extends Base {
+   dk?: string;
+   /** Internet animation data channels, enabled by the user. */
+   er?: 1;
++  /** Optional sound transfer capability. */
++  es?: 1;
++  /** Internet sound data channels, enabled by the user. */
++  et?: 1;
+ }
+ export interface PingMsg extends Base {
+   t: 'ping';
+@@ -147,6 +152,34 @@ export interface AnimationChunkMsg extends Base {
+   b: string;
+ }
+ export type AnimationMessage = AnimationWantMsg | AnimationInfoMsg | AnimationChunkMsg;
++export interface SoundInfo {
++  /** Full SHA-256 of the sound; the still hash alone does not identify its audio. */
++  a: string;
++  size: number;
++  format: 'ogg' | 'mp3' | 'wav';
++}
++export interface SoundWantMsg extends Base {
++  t: 'sound-want';
++  to: string;
++  h: string;
++  a?: string;
++  need?: number[];
++}
++export interface SoundInfoMsg extends Base {
++  t: 'sound-info';
++  to: string;
++  h: string;
++  info: SoundInfo | null;
++}
++export interface SoundChunkMsg extends Base {
++  t: 'sound-chunk';
++  to: string;
++  h: string;
++  a: string;
++  i: number;
++  b: string;
++}
++export type SoundMessage = SoundWantMsg | SoundInfoMsg | SoundChunkMsg;
+ /** Only accepted in a pairwise encrypted packet. Older apps reject that packet format. */
+ export interface EmoteListMsg extends Base {
+   t: 'emote-list';
+@@ -159,13 +192,16 @@ export interface RtcMsg extends Base {
+   n: number;
+   s: string;
+ }
+-export type RoomMessage = PresenceMsg | PingMsg | EmoteMsg | TextMsg | AliveMsg | VoteMsg | BallotMsg | WantMsg | ChunkMsg | ByeMsg | AnimationMessage | EmoteListMsg | RtcMsg;
++export type RoomMessage = PresenceMsg | PingMsg | EmoteMsg | TextMsg | AliveMsg | VoteMsg | BallotMsg | WantMsg | ChunkMsg | ByeMsg | AnimationMessage | SoundMessage | EmoteListMsg | RtcMsg;
+ 
+ /** Signed animation packets retain room for worst-case sequence numbers under MAX_PACKET. */
+ export const ANIMATION_CHUNK_BYTES = 540;
+ export const ANIMATION_WINDOW = 32;
+ export const ANIMATION_CHUNKS_MAX = Math.ceil(ANIM_MAX_BYTES / ANIMATION_CHUNK_BYTES);
+ export const ANIMATION_HASH_RE = /^[0-9a-f]{64}$/;
++export const SOUND_CHUNK_BYTES = ANIMATION_CHUNK_BYTES;
++export const SOUND_WINDOW = ANIMATION_WINDOW;
++export const SOUND_CHUNKS_MAX = Math.ceil(SOUND_MAX_BYTES / SOUND_CHUNK_BYTES);
+ 
+ // C0/C1 controls, zero-width characters, bidi marks, embeddings and isolates, BOM, line/paragraph separators,
+ // soft hyphen, combining grapheme joiner, Arabic letter mark, Mongolian vowel separator and the Hangul fillers
+@@ -243,6 +279,8 @@ export function validateMessage(raw: unknown): RoomMessage | null {
+         ...(raw.ea === 1 ? { ea: 1 as const } : {}),
+         ...(typeof raw.dk === 'string' && PK_RE.test(raw.dk) ? { dk: raw.dk } : {}),
+         ...(raw.er === 1 ? { er: 1 as const } : {}),
++        ...(raw.es === 1 ? { es: 1 as const } : {}),
++        ...(raw.et === 1 ? { et: 1 as const } : {}),
+       };
+       // A malformed custom colour is dropped rather than the whole presence: an unreadable tag beats a missing member.
+       return isTagRgb(rgb) ? { ...presence, rgb } : presence;
+@@ -325,6 +363,30 @@ export function validateMessage(raw: unknown): RoomMessage | null {
+       if (typeof b !== 'string' || b.length > ANIMATION_CHUNK_BYTES / 3 * 4 || b.length % 4 !== 0 || !B64_RE.test(b)) return null;
+       return { t, ...addressed, a, i, b };
+     }
++    case 'sound-want':
++    case 'sound-info':
++    case 'sound-chunk': {
++      const { to, h, a, need, info, i, b } = raw;
++      if (typeof to !== 'string' || !PEER_RE.test(to) || typeof h !== 'string' || !HASH_RE.test(h)) return null;
++      const addressed = { ...base, to, h };
++      if (t === 'sound-info') {
++        if (info === null) return { t, ...addressed, info: null };
++        if (!isObj(info) || typeof info.a !== 'string' || !ANIMATION_HASH_RE.test(info.a)) return null;
++        if (!isUint(info.size) || info.size < 1 || info.size > SOUND_MAX_BYTES) return null;
++        if (!AUDIO_TYPES.includes(info.format as SoundInfo['format'])) return null;
++        return { t, ...addressed, info: { a: info.a, size: info.size, format: info.format as SoundInfo['format'] } };
++      }
++      if (t === 'sound-want' && a === undefined && need === undefined) return { t, ...addressed };
++      if (typeof a !== 'string' || !ANIMATION_HASH_RE.test(a)) return null;
++      if (t === 'sound-want') {
++        if (!Array.isArray(need) || need.length < 1 || need.length > SOUND_WINDOW) return null;
++        if (!need.every((v) => isUint(v) && v < SOUND_CHUNKS_MAX)) return null;
++        return { t, ...addressed, a, need: [...new Set(need)] };
++      }
++      if (!isUint(i) || i >= SOUND_CHUNKS_MAX) return null;
++      if (typeof b !== 'string' || b.length > SOUND_CHUNK_BYTES / 3 * 4 || b.length % 4 !== 0 || !B64_RE.test(b)) return null;
++      return { t, ...addressed, a, i, b };
++    }
+     case 'bye':
+       return { t, ...base };
+     case 'emote-list':
+diff --git a/tests/main/emoteCache.test.ts b/tests/main/emoteCache.test.ts
+index 9be1fbd..e6ad7d1 100644
+--- a/tests/main/emoteCache.test.ts
++++ b/tests/main/emoteCache.test.ts
+@@ -24,6 +24,21 @@ afterEach(() => {
+ });
+ 
+ describe('EmoteCache', () => {
++  it('stores and restores bounded content-addressed sound without accepting other files', async () => {
++    const sounds = new EmoteCache(dir, () => clock, 'sound');
++    const hash = 'a'.repeat(64);
++    const bytes = new Uint8Array([...Buffer.from('RIFF'), 4, 0, 0, 0, ...Buffer.from('WAVE')]);
++    expect(await sounds.put(hash, bytes)).toBe(true);
++    expect(existsSync(join(dir, `${hash}.sound.wav`))).toBe(true);
++    const again = new EmoteCache(dir, () => clock, 'sound');
++    await again.present();
++    expect(again.has(hash)).toBe(true);
++    expect(await sounds.put('b'.repeat(64), Buffer.from('<svg/>'))).toBe(false);
++    expect(await sounds.put('../escape', bytes)).toBe(false);
++    const oversized = new Uint8Array(1024 * 1024 + 1);
++    oversized.set(bytes);
++    expect(await sounds.put('c'.repeat(64), oversized)).toBe(false);
++  });
+   it('coalesces simultaneous writes of the same verified content into one complete file', async () => {
+     const animations = new EmoteCache(dir, () => clock, true);
+     const hash = 'a'.repeat(64);

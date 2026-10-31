@@ -67,7 +67,7 @@ Windows 10 / 11，单文件，约 49 MB。
 
 lolPing 使用独立设置，保存在程序目录的 `data/lolping/`，不会修改其他桌宠的设置。源码运行需要 Windows Electron 43.3.0：默认读取 `%USERPROFILE%\.dsh\electron\electron.exe`，也可用 `TUTU_ELECTRON` 指定可执行文件。打包时设置 `TUTU_ELECTRON_DIR` 指向完整 Electron 目录（默认同上），运行组件将打包到 EXE 中。详见 [来源与许可证](runtime/lolping/lolping/README.md)：代码采用上游 MIT 许可证，游戏素材保留原有版权说明。
 
-联机房间支持同步自定义图片，以及不超过 5 MiB 的 GIF 和动态 WebP。双方需要使用支持动图同步的版本；首次加载或对方使用旧版本时会显示静态图。互联网动图使用 WebRTC，默认启用，可在房间设置中关闭；直连可能让房间双方看到彼此的 IP 地址，默认 STUN 服务由 Google 提供，部分网络可能需要 TURN 才能连接。自定义表情声音仅在本机播放。
+联机房间支持同步自定义图片、不超过 5 MiB 的 GIF 和动态 WebP，以及不超过 1 MiB、5 秒的自定义表情声音。双方需要使用支持相应功能的版本；首次加载或对方使用旧版本时会显示静态图且没有自定义声音。互联网动图和声音使用 WebRTC，由房间设置中的「互联网动图」开关共同控制；直连可能让房间双方看到彼此的 IP 地址，默认 STUN 服务由 Google 提供，部分网络可能需要 TURN 才能连接。
 
 没装 Electron 也没关系：兔兔照常启动，lolPing 子菜单里会显示「（未安装 Electron 运行组件）」，点其它项才会在气泡里提示缺什么，不会弹窗打断你。
 

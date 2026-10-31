@@ -23,7 +23,7 @@ function createLolPingIntegration(electron, options = {}) {
   let core = null;
   if (supported) {
     try {
-      core = require('./lolping/room-v06/out/main/integrated.cjs');
+      core = require('./lolping/room-v07/out/main/integrated.cjs');
       // main.js registers lolPing and pet bridge privileges together before ready.
     } catch (error) {
       failure = String(error.message || error);
@@ -61,7 +61,7 @@ function createLolPingIntegration(electron, options = {}) {
         }
         api = core.startIntegrated({
           dataDir,
-          helperPath: path.join(__dirname, 'lolping/room-v06/hook-helper.exe'),
+          helperPath: path.join(__dirname, 'lolping/room-v07/hook-helper.exe'),
           protectOverlay: (win) => overlayGuard.watch(win),
           prepareOverlay: (win, channel) => overlayGuard.prepare(win, channel),
           setLaunchAtStartup: options.setLaunchAtStartup || (() => {}),
